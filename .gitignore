@@ -1,4 +1,4 @@
-./backup.bin
-./out/
-./.cache/
-./compile_commands.json
+backup.bin
+out/
+.cache/
+compile_commands.json
