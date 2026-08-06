@@ -269,3 +269,82 @@ int main(void) {
   return 0;
 }
 ```
+
+# II. Custom CMSIS and clocks setup
+
+- На этом шаге избавимся от ручного определения каждого регистра через `#define`.
+- Настроим *SYSCLK* на 48MHZ (для USB в будущем, но можно и 72MHz использовать).
+- И сделаем моргание лампочкой через одну секунду (полный период две секунды) с помощью SysTick (встроенный таймер в Cortex-M3).
+
+## II.1 Write custom CMSIS
+
+Использовать `#define` для каждого регистра очень неудобно и подвержено к большому количеству ошибок. В качестве альтернативы можно регистры определять через *struct*, что уменьшит количество ошибок и сделает программирование более комфортным.
+Реализация тривиальна, открываем *RM '* register map'\* и просто всё переписываем. К каждому полю структуры нужно добавить модификатор `volatile`, чтобы компилятор не оптимизировал обращения.
+Дополнительно написана небольшая утилитка на Python в *tool/epos2msk.py*. Просто для удобной генерации из *enum* определений.
+Файл большой, тут вставлять не буду. Всё лежит в *src/registers.h*
+
+## II.2 Setup frequency to 48Mhz
+
+Сначала нужно настроить `FLASH->ACR` на пропуск одного такта, т.к. максимальная скорость *FLASH* - 24MHz. Если этого не сделать, то будут проблемы с работой МК и его прошивкой (потребудется сброс через `$ st-flash erase`).
+
+Далее нужно включить *HSE* и дождаться пока он включится.
+
+После, настраиваем *PLL*. Устанавливаем *HSE* как источник для *PLL* и ставим множитель *x6* для достижения 48MHz.
+
+Включаем *PLL* и дожидаемся пока он включится.
+
+Когда *PLL* включился, переключаем *SYSCLK* с *HSI* на *PLL*
+
+```c
+static inline void setup_frequency(void) {
+    // Enable flash latency to one (24MHz < SYSCLK <= 48MHz), cuz max frequency of the Flash is 24MHz
+    FLASH->ACR |= FLASH_ACR_LATENCY_ONE;
+
+    // Enable HSE and wait until it enables
+    RCC->CR |= RCC_CR_HSEON_ON;
+    while ((RCC->CR & RCC_CR_HSERDY_Msk) != RCC_CR_HSERDY_READY) {
+    }
+
+    // Setup PLL. HSE -> PLE (HSE * 6) ->
+    RCC->CFGR |= RCC_CFGR_PLLMUL_X6 | RCC_CFGR_PLLSRC_HSE | RCC_CFGR_PLLXTPRE_HSE_NO_DIV;
+
+    // Enable PLL and wait until it enables
+    RCC->CR |= RCC_CR_PLLON_ON;
+    while ((RCC->CR & RCC_CR_PLLRDY_Msk) != RCC_CR_PLLRDY_LOCKED) {
+    }
+
+    // Switch SYSCLK to PLL, and wait until it switches
+    RCC->CFGR |= RCC_CFGR_SW_PLL;
+    while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL) {
+    }
+}
+```
+
+Всё, BluePill работает на частоте 48Mhz.
+По хорошему, нужно сделать обработку случая, если *HSE* или *PLL* не включается, иначе программа зависнет в вечном цикле. К примеру можно просто добавить счётчик на несколько итераций, и если счётчик обнулился, то делать откат на обычный HSI и зажигать лампочку, например. Но это по хорошему.
+
+## II.3 SysTick setup and blink update
+
+Использовать `for(...){}` для имитации задержки, конечно, хорошо, но очень неточно. Чтоб добиться моргания лампочкой раз в секунду (полный период две секунды), настроим *SysTick*, который является стандартной периферией для процессоров *Cortex-M3*. Т.к. это периферия *Cortex-M3*, то документация лежит в *PM*.
+
+Сначала настроим сам SysTick.
+Мы должны задать значение `SysTick->LOAD` (24 бита), это значение (на самом деле `SysTick->VAL`) каждый тик будет декрементироваться, когда оно достигнет `0`, то будет вызвано прерывание `systick_hdl`. Таймер автоматически перезапускается
+
+```c
+static inline void setup_systick(void) {
+    SysTick->LOAD = LED_DELAY - 1;
+    SysTick->VAL = 0;
+
+    // Включаем сам SysTick и испускание прерывания, когда VAL достигает 0
+    SysTick->CTRL |= SysTick_CTRL_ENABLE | SysTick_CTRL_TICKINT;
+}
+```
+
+Теперь объявим само прерывание, т.к. в *src/startup.c* оно объявляно как *weak*, то нам нужно просто создать эту функцию.
+На каждое прерывания через XOR переключаем светодиод.
+
+```c
+void systick_hdl(void) {
+    GPIOC->ODR ^= 1 << LED;
+}
+```
