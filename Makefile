@@ -1,24 +1,45 @@
-.PHONY: build all upload
+.PHONY: compile clean flash
 
-OBJCOPY = arm-none-eabi-objcopy
+# CC := arm-none-eabi-gcc
+CC      := clang
+LD      := ld.lld
+OBJCOPY := llvm-objcopy
 
-CC = arm-none-eabi-gcc
-CFLAGS = -O2 -mcpu=cortex-m3 -mthumb -nostdlib -std=c99
-SOURCES = src/main.c src/startup.c
-OUT_DIR = out
+# CFLAGS := -O2  -mcpu=cortex-m3 -mthumb -nostdlib -fno-builtin -std=c99
+CFLAGS  := -O2 --target=arm-none-eabi -mcpu=cortex-m3 -mthumb -nostdlib -fno-builtin -std=c99 -Wpedantic -fno-exceptions -fno-unwind-tables
+LDFLAGS := -T linker_script.ld
 
-out:
-	mkdir $(OUT_DIR)
+SRC_DIR   := src
+BUILD_DIR := build
 
-$(OUT_DIR)/firmware.elf: out $(SOURCES)
-	$(CC) $(CFLAGS) $(SOURCES) -T linker_script.ld -o $(OUT_DIR)/firmware.elf  
+OBJ_DIR := $(BUILD_DIR)/.obj
 
-$(OUT_DIR)/firmware.bin: $(OUT_DIR)/firmware.elf
-	$(OBJCOPY) -O binary $(OUT_DIR)/firmware.elf $(OUT_DIR)/firmware.bin
+# Ok, is bad solution, but I'm too lazy, to set every sub dir
+SOURCES := $(shell find $(SRC_DIR) -name "*.c")
+OBJECTS := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SOURCES))
+DEPS    := $(OBJECTS:.o=.d)
 
-build: $(OUT_DIR)/firmware.bin
+$(BUILD_DIR): Makefile
+	@mkdir -p $(BUILD_DIR)
 
-upload: build
-	st-flash write $(OUT_DIR)/firmware.bin 0x08000000
+$(OBJ_DIR): $(BUILD_DIR)
+	@mkdir -p $(OBJ_DIR)
 
-all: upload
+$(OBJECTS): $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c Makefile | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+
+-include $(DEPS)
+
+$(BUILD_DIR)/firmware.elf: $(OBJECTS) linker_script.ld
+	$(LD) $(LDFLAGS) $(OBJECTS) -o $@
+
+$(BUILD_DIR)/firmware.bin: $(BUILD_DIR)/firmware.elf
+	$(OBJCOPY) -O binary $^ $@
+
+compile: $(BUILD_DIR)/firmware.bin
+
+flash: compile
+	st-flash write $(BUILD_DIR)/firmware.bin 0x08000000
+
+clean:
+	@rm -rf $(BUILD_DIR)

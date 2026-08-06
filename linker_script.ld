@@ -47,4 +47,9 @@ SECTIONS
     . = ALIGN(4);
     _ebss = .;
   } >SRAM
+
+  /DISCARD/ :
+  {
+      *(.ARM.exidx)
+  }
 }

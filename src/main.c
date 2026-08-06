@@ -1,61 +1,69 @@
 #include <stddef.h>
 #include <stdint.h>
 
-const size_t RCC_BASE = 0x40021000;
-const size_t RCC_APB2ENR_OFF = 0x18;
-const size_t RCC_APB2ENR = RCC_BASE + RCC_APB2ENR_OFF;
-const size_t RCC_APB2ENR_IOPCEN_OFF = 0x04;
-volatile uint32_t *const RCC_APB2ENR_PTR = (volatile uint32_t *)RCC_APB2ENR;
+#include "registers.h"
 
-const size_t GPIO_MODE_OFF = 0x00;
-const size_t GPIO_CNF_OFF = 0x02;
-const size_t GPIO_CRH_OFF = 0x04;
-const size_t GPIO_BSRR_OFF = 0x10;
-const size_t GPIO_BRR_OFF = 0x14;
-const size_t GPIOC_BASE = 0x40011000;
-const size_t GPIOC_CRH = GPIOC_BASE + GPIO_CRH_OFF;
-const size_t GPIOC_BSRR = GPIOC_BASE + GPIO_BSRR_OFF;
-const size_t GPIOC_BRR = GPIOC_BASE + GPIO_BRR_OFF;
-volatile uint32_t *const GPIOC_BASE_PTR = (volatile uint32_t *)GPIOC_BASE;
-volatile uint32_t *const GPIOC_CRH_PTR = (volatile uint32_t *)GPIOC_CRH;
-volatile uint32_t *const GPIOC_BSRR_PTR = (volatile uint32_t *)GPIOC_BSRR;
-volatile uint32_t *const GPIOC_BRR_PTR = (volatile uint32_t *)GPIOC_BRR;
+#define LED 13
+#define LED_DELAY 6000000
 
-const size_t OUTPUT_PUSH_PULL = 0b00;
-const size_t OUTPUT_MODE_2MHZ = 0b10;
-
-const size_t LED = 13;
-const size_t LED_CRH = 5;
-const size_t LED_DELAY = 1000000;
+static inline void setup_frequency(void);
+static inline void setup_systick(void);
 
 int main(void) {
-  // Enable APM2ENR bus
-  *RCC_APB2ENR_PTR |= 1 << RCC_APB2ENR_IOPCEN_OFF;
+    // Set SYSCLK to 48MHz
+    setup_frequency();
 
-  volatile uint32_t dummy;
-  dummy = *RCC_APB2ENR_PTR;
-  dummy = *RCC_APB2ENR_PTR;
+    // Enable APM2ENR bus
+    RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
 
-  // Setup PC13 to push-pull mode
-  const size_t mode_setup =
-      (OUTPUT_PUSH_PULL << GPIO_CNF_OFF) | (OUTPUT_MODE_2MHZ << GPIO_MODE_OFF);
-  *GPIOC_CRH_PTR |= mode_setup << (4 * LED_CRH);
+    volatile uint32_t dummy;
+    dummy = RCC->APB2ENR;
+    dummy = RCC->APB2ENR;
 
-  while (1) {
-    // Enable led
-    *GPIOC_BRR_PTR = 1 << LED;
+    setup_systick();
 
-    // Sleep
-    for (volatile size_t i = 0; i < LED_DELAY; i++)
-      ;
+    gpio_port_cfg(GPIOC, LED, GPIO_CNF_OUTPUT_PUSH_PULL, GPIO_MODE_OUTPUT_2MHZ);
 
-    // Disable led
-    *GPIOC_BSRR_PTR = 1 << LED;
+    while (1) {
+    }
 
-    // Sleep
-    for (volatile size_t i = 0; i < LED_DELAY; i++)
-      ;
-  }
+    return 0;
+}
 
-  return 0;
+
+/* === Set SYSCLK to 48MHz === */
+static inline void setup_frequency(void) {
+    // Enable flash latency to one (24MHz < SYSCLK <= 48MHz), cuz max frequency of the Flash is 24MHz
+    FLASH->ACR |= FLASH_ACR_LATENCY_ONE;
+
+    // Enable HSE and wait until it enables
+    RCC->CR |= RCC_CR_HSEON_ON;
+    while ((RCC->CR & RCC_CR_HSERDY_Msk) != RCC_CR_HSERDY_READY) {
+    }
+
+    // Setup PLL. HSE -> PLE (HSE * 6) ->
+    RCC->CFGR |= RCC_CFGR_PLLMUL_X6 | RCC_CFGR_PLLSRC_HSE | RCC_CFGR_PLLXTPRE_HSE_NO_DIV;
+
+    // Enable PLL and wait until it enables
+    RCC->CR |= RCC_CR_PLLON_ON;
+    while ((RCC->CR & RCC_CR_PLLRDY_Msk) != RCC_CR_PLLRDY_LOCKED) {
+    }
+
+    // Switch SYSCLK to PLL, and wait until it switches
+    RCC->CFGR |= RCC_CFGR_SW_PLL;
+    while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL) {
+    }
+}
+
+
+static inline void setup_systick(void) {
+    SysTick->LOAD = LED_DELAY - 1;
+    SysTick->VAL = 0;
+
+    SysTick->CTRL |= SysTick_CTRL_ENABLE | SysTick_CTRL_TICKINT;
+}
+
+
+void systick_hdl(void) {
+    GPIOC->ODR ^= 1 << LED;
 }
