@@ -2,14 +2,18 @@
 #include <stdint.h>
 
 #include "registers.h"
+#include "rtt.h"
 
 #define LED 13
 #define LED_DELAY 6000000
+
 
 static inline void setup_frequency(void);
 static inline void setup_systick(void);
 
 int main(void) {
+    rtt_init((const char*[]) {"Terminal"}, (uint32_t[]) {RTT_BUFFER_MODE_BLOCK_IF_FULL}, NULL, NULL);
+
     // Set SYSCLK to 48MHz
     setup_frequency();
 
@@ -66,4 +70,7 @@ static inline void setup_systick(void) {
 
 void systick_hdl(void) {
     GPIOC->ODR ^= 1 << LED;
+
+    static uint32_t blink_counter = 0;
+    rprintf(0, "Blink #%u\n", ++blink_counter);
 }

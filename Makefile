@@ -6,7 +6,7 @@ LD      := ld.lld
 OBJCOPY := llvm-objcopy
 
 # CFLAGS := -O2  -mcpu=cortex-m3 -mthumb -nostdlib -fno-builtin -std=c99
-CFLAGS  := -O2 --target=arm-none-eabi -mcpu=cortex-m3 -mthumb -nostdlib -fno-builtin -std=c99 -Wpedantic -fno-exceptions -fno-unwind-tables
+CFLAGS  := -O0 -g --target=arm-none-eabi -mcpu=cortex-m3 -mthumb -nostdlib -fno-builtin -std=c99 -Wpedantic -fno-exceptions -fno-unwind-tables
 LDFLAGS := -T linker_script.ld
 
 SRC_DIR   := src
@@ -40,6 +40,9 @@ compile: $(BUILD_DIR)/firmware.bin
 
 flash: compile
 	st-flash write $(BUILD_DIR)/firmware.bin 0x08000000
+
+probe-rs: compile
+	probe-rs run --chip STM32F103C8Tx $(BUILD_DIR)/firmware.elf
 
 clean:
 	@rm -rf $(BUILD_DIR)
